@@ -27,6 +27,7 @@ const (
 	selinuxDir       = "/etc/selinux/"
 	selinuxUsersDir  = "contexts/users"
 	defaultContexts  = "contexts/default_contexts"
+	failsafeContext  = "contexts/failsafe_context"
 	selinuxConfig    = selinuxDir + "config"
 	selinuxfsMount   = "/sys/fs/selinux"
 	selinuxTypeTag   = "SELINUXTYPE"
@@ -57,6 +58,7 @@ type defaultSECtx struct {
 	userRdr           io.Reader
 	verifier          func(string) error
 	defaultRdr        io.Reader
+	failsafeRdr       io.Reader
 	user, level, scon string
 }
 
@@ -1181,6 +1183,102 @@ func dupSecOpt(src string) ([]string, error) {
 	return dup, nil
 }
 
+// checkGroup returns true if group's GID is in the list of GIDs gids.
+func checkGroup(group string, gids []string, lookupGroup func(string) (*user.Group, error)) bool {
+	grp, err := lookupGroup(group)
+	if err != nil {
+		return false
+	}
+
+	for _, gid := range gids {
+		if grp.Gid == gid {
+			return true
+		}
+	}
+	return false
+}
+
+// reads the seusers file: https://www.man7.org/linux/man-pages/man5/seusers.5.html
+func getSeUserFromReader(username string, gids []string, r io.Reader, lookupGroup func(string) (*user.Group, error)) (string, string, error) {
+	var defaultSeUser, defaultLevel string
+	var groupSeUser, groupLevel string
+
+	scanner := bufio.NewScanner(r)
+	for scanner.Scan() {
+		line := scanner.Text()
+
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		parts := strings.SplitN(line, ":", 3)
+		if len(parts) < 2 {
+			continue
+		}
+		userField := parts[0]
+		if userField == "" {
+			continue
+		}
+		seUserField := parts[1]
+		if seUserField == "" {
+			continue
+		}
+		var levelField string
+		// level is optional
+		if len(parts) > 2 {
+			levelField = parts[2]
+		}
+
+		// we found a match, return it
+		if userField == username {
+			return seUserField, levelField, nil
+		}
+
+		// if the first field starts with '%' it's a group, check if
+		// the user is a member of that group and set the group
+		// SELinux user and level if so
+		if userField[0] == '%' && groupSeUser == "" {
+			if checkGroup(userField[1:], gids, lookupGroup) {
+				groupSeUser = seUserField
+				groupLevel = levelField
+			}
+		} else if userField == "__default__" && defaultSeUser == "" {
+			defaultSeUser = seUserField
+			defaultLevel = levelField
+		}
+	}
+
+	if groupSeUser != "" {
+		return groupSeUser, groupLevel, nil
+	}
+	if defaultSeUser != "" {
+		return defaultSeUser, defaultLevel, nil
+	}
+
+	return "", "", fmt.Errorf("could not find SELinux user for %s login", username)
+}
+
+func getSeUserByName(username string) (string, string, error) {
+	seUsersConf := filepath.Join(policyRoot(), "seusers")
+	confFile, err := os.Open(seUsersConf)
+	if err != nil {
+		return "", "", err
+	}
+	defer confFile.Close()
+
+	usr, err := user.Lookup(username)
+	if err != nil {
+		return "", "", err
+	}
+	gids, err := usr.GroupIds()
+	if err != nil {
+		return "", "", err
+	}
+	gids = append([]string{usr.Gid}, gids...)
+
+	return getSeUserFromReader(username, gids, confFile, user.LookupGroup)
+}
+
 // findUserInContext scans the reader for a valid SELinux context
 // match that is verified with the verifier. Invalid contexts are
 // skipped. It returns a matched context or an empty string if no
@@ -1238,6 +1336,30 @@ func findUserInContext(context Context, r io.Reader, verifier func(string) error
 	return "", nil
 }
 
+// returns the context in the failsafe_context file:
+// https://www.man7.org/linux/man-pages/man5/failsafe_context.5.html
+func getFailsafeContext(context Context, r io.Reader, verifier func(string) error) (string, error) {
+	conn, err := io.ReadAll(r)
+	if err != nil {
+		return "", fmt.Errorf("failed to read failsafe context: %w", err)
+	}
+
+	toConns := strings.SplitN(string(conn), ":", 4)
+	if len(toConns) != 3 {
+		return "", nil
+	}
+
+	context["role"] = toConns[0]
+	context["type"] = toConns[1]
+
+	outConn := context.get()
+	if err := verifier(outConn); err != nil {
+		return "", nil
+	}
+
+	return outConn, nil
+}
+
 func getDefaultContextFromReaders(c *defaultSECtx) (string, error) {
 	if c.verifier == nil {
 		return "", ErrVerifierNil
@@ -1270,6 +1392,15 @@ func getDefaultContextFromReaders(c *defaultSECtx) (string, error) {
 		return conn, nil
 	}
 
+	conn, err = getFailsafeContext(context, c.failsafeRdr, c.verifier)
+	if err != nil {
+		return "", err
+	}
+
+	if conn != "" {
+		return conn, nil
+	}
+
 	return "", fmt.Errorf("context %q not found: %w", c.scon, ErrContextMissing)
 }
 
@@ -1288,13 +1419,21 @@ func getDefaultContextWithLevel(user, level, scon string) (string, error) {
 	}
 	defer fd.Close()
 
+	failsafePath := filepath.Join(policyRoot(), failsafeContext)
+	fs, err := os.Open(failsafePath)
+	if err != nil {
+		return "", err
+	}
+	defer fs.Close()
+
 	c := defaultSECtx{
-		user:       user,
-		level:      level,
-		scon:       scon,
-		userRdr:    fu,
-		defaultRdr: fd,
-		verifier:   securityCheckContext,
+		user:        user,
+		level:       level,
+		scon:        scon,
+		userRdr:     fu,
+		defaultRdr:  fd,
+		failsafeRdr: fs,
+		verifier:    securityCheckContext,
 	}
 
 	return getDefaultContextFromReaders(&c)
