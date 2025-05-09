@@ -1354,7 +1354,9 @@ func findUserInContext(context Context, r io.Reader, verifier func(string) error
 // getFailsafeContext returns the context in the failsafe_context file:
 // https://www.man7.org/linux/man-pages/man5/failsafe_context.5.html
 func getFailsafeContext(context Context, r io.Reader, verifier func(string) error) (string, error) {
-	conn, err := io.ReadAll(r)
+	conn := make([]byte, 8192)
+	limReader := io.LimitReader(r, 8192)
+	_, err := limReader.Read(conn)
 	if err != nil {
 		return "", fmt.Errorf("failed to read failsafe context: %w", err)
 	}
