@@ -596,7 +596,7 @@ func TestGetSeUser(t *testing.T) {
 		seUserBuf   string
 		seUser      string
 		level       string
-		expectedErr bool
+		expectedErr string
 	}{
 		{
 			name:      "one entry match",
@@ -622,12 +622,23 @@ bob:staff_u:s0-s15:c0.c255`,
 			level:  "s0-s15:c0.c255",
 		},
 		{
+			name:     "match with comment",
+			username: "bob",
+			seUserBuf: `
+system_u:system_u:s0-s15:c0.c255
+# foobar
+root:root:s0-s15:c0.c255
+bob:staff_u:s0-s15:c0.c255 #baz`,
+			seUser: "staff_u",
+			level:  "s0-s15:c0.c255",
+		},
+		{
 			name:     "no match",
 			username: "bob",
 			seUserBuf: `
 system_u:system_u:s0-s15:c0.c255
 root:root:s0-s15:c0.c255`,
-			expectedErr: true,
+			expectedErr: `could not find SELinux user for "bob" login`,
 		},
 		{
 			name:     "group match",
@@ -648,7 +659,37 @@ root:root:s0-s15:c0.c255
 system_u:system_u:s0-s15:c0.c255
 root:root:s0-s15:c0.c255
 %group:staff_u:s0`,
-			expectedErr: true,
+			expectedErr: `could not find SELinux user for "bob" login`,
+		},
+		{
+			name:     "malformed line",
+			username: "bob",
+			seUserBuf: `
+system_u:system_u:s0-s15:c0.c255
+root:root:s0-s15:c0.c255
+foobar
+bob:staff_u:s0-s15:c0.c255`,
+			expectedErr: "line 3: malformed line",
+		},
+		{
+			name:     "empty user",
+			username: "bob",
+			seUserBuf: `
+system_u:system_u:s0-s15:c0.c255
+root:root:s0-s15:c0.c255
+:seuser_u
+bob:staff_u:s0-s15:c0.c255`,
+			expectedErr: "line 3: user_id or group_id is empty",
+		},
+		{
+			name:     "empty seuser",
+			username: "bob",
+			seUserBuf: `
+system_u:system_u:s0-s15:c0.c255
+root:root:s0-s15:c0.c255
+user::s0
+bob:staff_u:s0-s15:c0.c255`,
+			expectedErr: "line 3: seuser_id is empty",
 		},
 	}
 
@@ -657,9 +698,13 @@ root:root:s0-s15:c0.c255
 
 			r := bytes.NewBufferString(tt.seUserBuf)
 			seUser, level, err := getSeUserFromReader(tt.username, tt.gids, r, lookupGroup)
-			if tt.expectedErr && err == nil {
-				t.Fatal("expected an error but got nil")
-			} else if !tt.expectedErr && err != nil {
+			if tt.expectedErr != "" {
+				if err == nil {
+					t.Fatal("expected an error but got nil")
+				} else if err.Error() != tt.expectedErr {
+					t.Fatalf("got error: %q but expected %q", err.Error(), tt.expectedErr)
+				}
+			} else if tt.expectedErr == "" && err != nil {
 				t.Fatalf("err should not exist but is: %v", err)
 			}
 
