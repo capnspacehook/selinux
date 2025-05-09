@@ -1266,6 +1266,8 @@ func getSeUserFromReader(username string, gids []string, r io.Reader, lookupGrou
 	return "", "", fmt.Errorf("could not find SELinux user for %q login", username)
 }
 
+// getSeUserByName returns an SELinux user and MLS level that is
+// mapped to a given Linux user.
 func getSeUserByName(username string) (string, string, error) {
 	seUsersConf := filepath.Join(policyRoot(), "seusers")
 	confFile, err := os.Open(seUsersConf)
