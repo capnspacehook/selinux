@@ -1,10 +1,13 @@
 # selinux
 
-This fork exists to add needed functionality for Teleport SSH's SELinux support and will be upstreamed (if accepted).
-
 [![GoDoc](https://godoc.org/github.com/opencontainers/selinux?status.svg)](https://godoc.org/github.com/opencontainers/selinux) [![Go Report Card](https://goreportcard.com/badge/github.com/opencontainers/selinux)](https://goreportcard.com/report/github.com/opencontainers/selinux) [![Build Status](https://travis-ci.org/opencontainers/selinux.svg?branch=master)](https://travis-ci.org/opencontainers/selinux)
 
 Common SELinux package used across the container ecosystem.
+
+## Teleport Fork
+
+This fork exists to add finding the correct SELinux user mapping from a Linux user and reading the `failsafe_context` file in `GetDefaultContextWithLevel`.
+This is required for Teleport SSH's SELinux support and will be upstreamed (if accepted).
 
 ## Usage
 

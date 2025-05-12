@@ -1199,7 +1199,7 @@ func checkGroup(group string, gids []string, lookupGroup func(string) (*user.Gro
 }
 
 // getSeUserFromReader reads the seusers file: https://www.man7.org/linux/man-pages/man5/seusers.5.html
-func getSeUserFromReader(username string, gids []string, r io.Reader, lookupGroup func(string) (*user.Group, error)) (string, string, error) {
+func getSeUserFromReader(username string, gids []string, r io.Reader, lookupGroup func(string) (*user.Group, error)) (seUser string, level string, err error) {
 	var defaultSeUser, defaultLevel string
 	var groupSeUser, groupLevel string
 
@@ -1268,7 +1268,7 @@ func getSeUserFromReader(username string, gids []string, r io.Reader, lookupGrou
 
 // getSeUserByName returns an SELinux user and MLS level that is
 // mapped to a given Linux user.
-func getSeUserByName(username string) (string, string, error) {
+func getSeUserByName(username string) (seUser string, level string, err error) {
 	seUsersConf := filepath.Join(policyRoot(), "seusers")
 	confFile, err := os.Open(seUsersConf)
 	if err != nil {
@@ -1286,7 +1286,7 @@ func getSeUserByName(username string) (string, string, error) {
 	}
 	gids = append([]string{usr.Gid}, gids...)
 
-	seUser, level, err := getSeUserFromReader(username, gids, confFile, user.LookupGroup)
+	seUser, level, err = getSeUserFromReader(username, gids, confFile, user.LookupGroup)
 	if err != nil {
 		return "", "", fmt.Errorf("failed to parse seusers file: %w", err)
 	}

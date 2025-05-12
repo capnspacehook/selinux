@@ -308,7 +308,7 @@ func DisableSecOpt() []string {
 // getSeUserByName retrieves the SELinux username and security level for a given
 // Linux username. The username and security level is based on the
 // /etc/selinux/{SELINUXTYPE}/seusers file.
-func GetSeUserByName(username string) (string, string, error) {
+func GetSeUserByName(username string) (seUser string, level string, err error) {
 	return getSeUserByName(username)
 }
 
